@@ -46,6 +46,13 @@ export default defineConfig({
     compatibilityDate: "2026-09-29",
     compatibilityFlags: ["nodejs_compat"],
     assets: { notFoundHandling: "none" },
+    // Make observability the config's responsibility, not the Dashboard's.
+    // New Workers default to logs enabled, but if logs are toggled off in the
+    // Cloudflare Dashboard the generated local config still says enabled:true,
+    // and non-interactive (CI) deploys run with --strict and abort on the
+    // resulting drift. Setting it explicitly keeps local and remote in sync so
+    // the deploy reconciles the value instead of failing.
+    observability: { enabled: true, logs: { enabled: true } },
     env: {
       ASSETS: bindings.assets(),
       DB: d1For(mode),
