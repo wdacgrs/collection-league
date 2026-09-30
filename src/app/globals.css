@@ -101,8 +101,10 @@ h1, h2, h3, p { margin-top: 0; }
 .page-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem; border-bottom: 1px solid var(--line); padding-bottom: 1.2rem; }
 .page-heading h1 { font-size: clamp(2.2rem, 5vw, 3.8rem); }
 .page-heading > span { color: var(--gold); }
-.deck-create { display: grid; grid-template-columns: 1fr 1fr auto; gap: .8rem; align-items: end; background: var(--panel); border: 1px solid var(--line); padding: 1rem; margin-bottom: 1.5rem; }
+.deck-create { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: .8rem; align-items: end; background: var(--panel); border: 1px solid var(--line); padding: 1rem; margin-bottom: 1.5rem; }
 .deck-create label { display: grid; gap: .35rem; font-size: .85rem; color: var(--muted); }
+.deck-create .field-hint { grid-column: 1 / -1; margin: 0; font-size: .8rem; color: var(--muted); }
+.deck-create select:disabled { opacity: .55; cursor: not-allowed; }
 .deck-list { display: grid; gap: .65rem; }
 .deck-row { display: flex; align-items: center; gap: 1rem; padding: 1rem; border: 1px solid var(--line); background: #14161a; }
 .deck-row > div:first-child { flex: 1; }
