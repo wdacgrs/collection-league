@@ -4,7 +4,8 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { jsonFetch, type CatalogCard, type CollectionCard, type DeckSummary } from "@/lib/client";
 import { commanderCandidates } from "@/lib/commander-selection";
-import { parseCommanderNames } from "@/lib/deck-identity";
+import { deckBanner } from "@/lib/deck-banner";
+import { parseCommanderNames, resolveCommanderIdentity } from "@/lib/deck-identity";
 
 type Data = { profile: { name: string }; cards: CollectionCard[]; decks: DeckSummary[] };
 
@@ -33,6 +34,17 @@ export function DeckList({ profileId }: { profileId: string }) {
 
   // Legendary creatures this player owns; the only cards offered as commanders.
   const candidates = useMemo(() => (data ? commanderCandidates(data.cards, catalog) : []), [data, catalog]);
+
+  // Banner per deck from its commanders' color identity. Waits for the catalog
+  // so decks don't flash the colorless banner while identities are unknown.
+  const banners = useMemo(() => {
+    const out = new Map<string, ReturnType<typeof deckBanner>>();
+    if (!data || catalog.length === 0) return out;
+    for (const deck of data.decks) {
+      out.set(deck.id, deckBanner(resolveCommanderIdentity(parseCommanderNames(deck.commander), catalog)));
+    }
+    return out;
+  }, [data, catalog]);
 
   function chooseCommander(name: string) {
     setCommander(name); setCmdQuery(name); setCmdOpen(false);
@@ -81,6 +93,6 @@ export function DeckList({ profileId }: { profileId: string }) {
       <p id="commander-hint" className="field-hint">{hint}</p>
     </form>
     {error && <p className="error-banner" role="alert">{error}</p>}
-    <section className="deck-list">{data.decks.length === 0 ? <div className="empty"><h2>No decks yet</h2><p>Create one above, then add cards from this collection.</p></div> : data.decks.map((deck) => <article className="deck-row" key={deck.id}><div><h2>{deck.name}</h2><p>{commanderLabel(deck.commander)}</p></div><span>{deck.cardCount} card entries</span><Link className="button-link" href={`/p/${profileId}/decks/${deck.id}`}>Edit</Link>{confirmId === deck.id ? <div className="inline-confirm"><span>Delete {deck.name}?</span><button className="danger" type="button" onClick={() => void remove(deck.id)}>Confirm</button><button type="button" onClick={() => closeConfirm(deck.id)}>Cancel</button></div> : <button ref={(node) => { if (node) deleteTriggers.current.set(deck.id, node); else deleteTriggers.current.delete(deck.id); }} className="danger-ghost" type="button" onClick={() => setConfirmId(deck.id)}>Delete</button>}</article>)}</section>
+    <section className="deck-list">{data.decks.length === 0 ? <div className="empty"><h2>No decks yet</h2><p>Create one above, then add cards from this collection.</p></div> : data.decks.map((deck) => { const banner = banners.get(deck.id); return <article className={banner ? "deck-row has-banner" : "deck-row"} key={deck.id}><div><h2>{deck.name}</h2><p>{commanderLabel(deck.commander)}</p></div>{banner && <div className="deck-banner" style={{ background: banner.background }} role="img" aria-label={banner.label} title={banner.label} />}<span>{deck.cardCount} card entries</span><Link className="button-link" href={`/p/${profileId}/decks/${deck.id}`}>Edit</Link>{confirmId === deck.id ? <div className="inline-confirm"><span>Delete {deck.name}?</span><button className="danger" type="button" onClick={() => void remove(deck.id)}>Confirm</button><button type="button" onClick={() => closeConfirm(deck.id)}>Cancel</button></div> : <button ref={(node) => { if (node) deleteTriggers.current.set(deck.id, node); else deleteTriggers.current.delete(deck.id); }} className="danger-ghost" type="button" onClick={() => setConfirmId(deck.id)}>Delete</button>}</article>; })}</section>
   </main>;
 }

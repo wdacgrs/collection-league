@@ -117,6 +117,9 @@ h1, h2, h3, p { margin-top: 0; }
 .deck-row h2 { margin: 0; font-family: Georgia, serif; }
 .deck-row p { margin: .2rem 0 0; color: var(--muted); }
 .deck-row > span { color: var(--muted); font-size: .85rem; }
+/* Commander color-identity banner: a band across the top of the deck row. */
+.deck-row.has-banner { position: relative; overflow: hidden; padding-top: calc(1rem + 8px); }
+.deck-banner { position: absolute; inset: 0 0 auto 0; height: 8px; }
 .danger, .danger-ghost { color: #ff9b9b; }
 .inline-confirm { display: flex; align-items: center; gap: .4rem; padding-left: .5rem; border-left: 1px solid var(--line); }
 .inline-confirm span { font-size: .85rem; }
