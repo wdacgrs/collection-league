@@ -4,19 +4,20 @@
 import { WUBRG_ORDER, type ColorIdentity, type WUBRG } from "./color-identity";
 
 /**
- * Background tone per color. Deep, muted shades so the row's light text keeps
- * at least 4.5:1 contrast on every tone.
+ * Background tone per color: the fills of the mana symbols printed on Magic
+ * cards. All five are light, so the row's dark text keeps at least 7:1
+ * contrast anywhere along the gradient.
  */
 export const BANNER_COLORS: Readonly<Record<WUBRG, string>> = {
-  W: "#67655e",
-  U: "#1f5a92",
-  B: "#3a3044",
-  R: "#943222",
-  G: "#2a6a3b",
+  W: "#fffbd5",
+  U: "#aae0fa",
+  B: "#cbc2bf",
+  R: "#f9aa8f",
+  G: "#9bd3ae",
 };
 
-/** Colorless commanders (empty identity) get brown. */
-export const COLORLESS_BANNER = "#6b4a2e";
+/** Colorless commanders (empty identity) get a light brown in the same family. */
+export const COLORLESS_BANNER = "#c9a57e";
 
 /** Direction of the multicolor gradient. */
 export const GRADIENT_ANGLE = "45deg";
