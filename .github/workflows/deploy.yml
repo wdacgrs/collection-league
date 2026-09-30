@@ -64,13 +64,25 @@ jobs:
           if [ "$IS_PRODUCTION" != "true" ]; then
             worker_name="${worker_name}-preview"
           fi
-          response="$(curl --fail-with-body --silent --show-error \
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          http_code="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
             --request PATCH \
             --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${worker_name}/script-settings" \
             --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             --header "Content-Type: application/json" \
             --data '{"observability":{"enabled":true}}')"
-          echo "$response" | jq --exit-status '.success == true' >/dev/null
+          if [ "$http_code" = "404" ]; then
+            echo "Worker $worker_name does not exist yet; the deployment will create it."
+            exit 0
+          fi
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            cat "$response_file"
+            exit 1
+          fi
+          jq --exit-status '.success == true' "$response_file" >/dev/null
       - name: Build & deploy (production)
         if: env.IS_PRODUCTION == 'true'
         run: npm run deploy:vinext
