@@ -10,26 +10,41 @@ export async function GET(_: Request, { params }: Context) {
   const { id, deckId } = await params;
   const db = getDb();
 
-  const deck = await db
-    .select()
-    .from(decks)
-    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
-    .limit(1)
-    .then((r) => r[0] ?? null);
+  // One round trip. The cards query is scoped through the deck's owner so a
+  // mismatched profile id can never leak another profile's deck cards.
+  const [deckRows, cards] = await db.batch([
+    db
+      .select()
+      .from(decks)
+      .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
+      .limit(1),
+    db
+      .select({
+        id: deckCards.id,
+        deckId: deckCards.deckId,
+        name: deckCards.name,
+        qty: deckCards.qty,
+        isBasic: deckCards.isBasic,
+      })
+      .from(deckCards)
+      .innerJoin(
+        decks,
+        and(eq(decks.id, deckCards.deckId), eq(decks.profileId, id)),
+      )
+      .where(eq(deckCards.deckId, deckId))
+      .orderBy(deckCards.name),
+  ]);
+  const deck = deckRows[0];
   if (!deck) return error("Deck not found.", 404);
-
-  const cards = await db
-    .select()
-    .from(deckCards)
-    .where(eq(deckCards.deckId, deckId))
-    .orderBy(deckCards.name);
-
   return NextResponse.json({ deck, cards });
 }
 
 export async function PUT(request: Request, { params }: Context) {
   const { id, deckId } = await params;
-  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const body = (await request.json().catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
   if (body.name === undefined && body.commander === undefined)
     return error("Provide a name or commander to update.");
 
@@ -44,44 +59,22 @@ export async function PUT(request: Request, { params }: Context) {
     updateData.commander = cleanName(body.commander) || null;
   }
 
-  const db = getDb();
-
-  const exists = await db
-    .select({ id: decks.id })
-    .from(decks)
-    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
-    .limit(1)
-    .then((r) => r[0] ?? null);
-  if (!exists) return error("Deck not found.", 404);
-
-  await db
+  // UPDATE ... RETURNING: existence check, write, and re-read in one statement.
+  const updated = await getDb()
     .update(decks)
     .set(updateData)
-    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)));
-
-  const deck = await db
-    .select()
-    .from(decks)
-    .where(eq(decks.id, deckId))
-    .limit(1)
-    .then((r) => r[0]);
-  return NextResponse.json({ deck });
+    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
+    .returning();
+  if (!updated.length) return error("Deck not found.", 404);
+  return NextResponse.json({ deck: updated[0] });
 }
 
 export async function DELETE(_: Request, { params }: Context) {
   const { id, deckId } = await params;
-  const db = getDb();
-
-  const exists = await db
-    .select({ id: decks.id })
-    .from(decks)
-    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
-    .limit(1)
-    .then((r) => r[0] ?? null);
-  if (!exists) return error("Deck not found.", 404);
-
-  await db
+  const deleted = await getDb()
     .delete(decks)
-    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)));
+    .where(and(eq(decks.id, deckId), eq(decks.profileId, id)))
+    .returning({ id: decks.id });
+  if (!deleted.length) return error("Deck not found.", 404);
   return NextResponse.json({ deleted: true });
 }

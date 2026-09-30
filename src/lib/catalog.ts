@@ -1,5 +1,6 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { chunksOf } from "./chunks";
+import { isConstraintError, qualified } from "./sql";
 import { getDb, type Db } from "./db";
 import { catalog as catalogTable } from "@/db/schema";
 import {
@@ -60,20 +61,47 @@ function toRow(card: CatalogCard) {
  * Runtime source of truth after the migration off the bundled JSON.
  */
 export async function getCatalog(db: Db = getDb()): Promise<CatalogCard[]> {
+  return catalogQuery(db);
+}
+
+/** Un-awaited full-catalog query, so callers can include it in `db.batch`. */
+export function catalogQuery(db: Db) {
   return db
     .select(CATALOG_COLUMNS)
     .from(catalogTable)
     .orderBy(asc(catalogTable.name));
 }
 
-/** Case-insensitive map of lowercased name -> canonical catalog name. */
-export async function catalogNames(
+/**
+ * Resolve a user-typed name to its canonical catalog name with a single
+ * indexed lookup (Catalog_name_nocase_idx), or null when not in the catalog.
+ * Prefer this over `catalogNames()` when resolving one name: it reads one row
+ * instead of the whole table. Note NOCASE folds ASCII letters only.
+ */
+export async function resolveCatalogName(
+  name: string,
   db: Db = getDb(),
-): Promise<Map<string, string>> {
-  const cards = await getCatalog(db);
-  return new Map(
-    cards.map((card) => [card.name.toLocaleLowerCase(), card.name]),
-  );
+): Promise<string | null> {
+  const rows = await catalogNameQuery(db, name);
+  return rows[0]?.name ?? null;
+}
+
+/** Un-awaited form of `resolveCatalogName`, for use inside `db.batch`. */
+export function catalogNameQuery(db: Db, name: string) {
+  return db
+    .select({ name: catalogTable.name })
+    .from(catalogTable)
+    .where(sql`${catalogTable.name} = ${name} COLLATE NOCASE`)
+    .limit(1);
+}
+
+/**
+ * SQL scalar resolving `name` to its canonical catalog name, falling back to
+ * `name` itself. Lets a query filter by canonical name in the same statement
+ * (and the same D1 round trip) as the lookup.
+ */
+export function canonicalNameExpr(name: string) {
+  return sql<string>`coalesce((select ${qualified(catalogTable.name)} from ${catalogTable} where ${qualified(catalogTable.name)} = ${name} COLLATE NOCASE limit 1), ${name})`;
 }
 
 /** Fetch a single card by exact name, or null when absent. */
@@ -98,13 +126,11 @@ export async function createCatalogCard(
   db: Db = getDb(),
 ): Promise<CatalogCard> {
   validateCatalog([card]);
-  if (await getCatalogCard(card.name, db)) {
-    throw new CatalogConflictError(card.name);
-  }
+  // The primary key rejects duplicates; no pre-check round trip needed.
   try {
     await db.insert(catalogTable).values(toRow(card));
   } catch (cause) {
-    if (String(cause).includes("UNIQUE constraint failed")) {
+    if (isConstraintError(cause, "UNIQUE")) {
       throw new CatalogConflictError(card.name);
     }
     throw cause;
@@ -124,24 +150,22 @@ export async function updateCatalogCard(
   db: Db = getDb(),
 ): Promise<CatalogCard> {
   validateCatalog([card]);
-  if (!(await getCatalogCard(originalName, db))) {
-    throw new CatalogNotFoundError(originalName);
-  }
-  const renaming = card.name !== originalName;
-  if (renaming && (await getCatalogCard(card.name, db))) {
-    throw new CatalogConflictError(card.name);
-  }
+  // One statement: RETURNING detects a missing target, and the primary key
+  // rejects a rename onto an occupied name.
+  let updated: { name: string }[];
   try {
-    await db
+    updated = await db
       .update(catalogTable)
       .set(toRow(card))
-      .where(eq(catalogTable.name, originalName));
+      .where(eq(catalogTable.name, originalName))
+      .returning({ name: catalogTable.name });
   } catch (cause) {
-    if (String(cause).includes("UNIQUE constraint failed")) {
+    if (isConstraintError(cause, "UNIQUE")) {
       throw new CatalogConflictError(card.name);
     }
     throw cause;
   }
+  if (!updated.length) throw new CatalogNotFoundError(originalName);
   return card;
 }
 
@@ -153,10 +177,11 @@ export async function deleteCatalogCard(
   name: string,
   db: Db = getDb(),
 ): Promise<void> {
-  if (!(await getCatalogCard(name, db))) {
-    throw new CatalogNotFoundError(name);
-  }
-  await db.delete(catalogTable).where(eq(catalogTable.name, name));
+  const deleted = await db
+    .delete(catalogTable)
+    .where(eq(catalogTable.name, name))
+    .returning({ name: catalogTable.name });
+  if (!deleted.length) throw new CatalogNotFoundError(name);
 }
 
 /**

@@ -16,9 +16,9 @@ export function MatchesDashboard() {
   const [loserDecks, setLoserDecks] = useState<DeckSummary[]>([]);
   const [error, setError] = useState("");
   const loadMatches = useCallback(async () => { const data = await jsonFetch<{ matches: MatchRecord[] }>("/api/matches"); setMatches(data.matches); }, []);
-  useEffect(() => { Promise.all([jsonFetch<{ profiles: Profile[] }>("/api/profiles"), loadMatches()]).then(([data]) => setProfiles(data.profiles)).catch((cause) => setError(cause.message)); }, [loadMatches]);
-  useEffect(() => { if (!winnerId) { setWinnerDecks([]); return; } jsonFetch<{ decks: DeckSummary[] }>(`/api/profiles/${winnerId}`).then((data) => setWinnerDecks(data.decks)).catch((cause) => setError(cause.message)); }, [winnerId]);
-  useEffect(() => { if (!loserId) { setLoserDecks([]); return; } jsonFetch<{ decks: DeckSummary[] }>(`/api/profiles/${loserId}`).then((data) => setLoserDecks(data.decks)).catch((cause) => setError(cause.message)); }, [loserId]);
+  useEffect(() => { Promise.all([jsonFetch<{ profiles: Profile[] }>("/api/profiles?counts=0"), loadMatches()]).then(([data]) => setProfiles(data.profiles)).catch((cause) => setError(cause.message)); }, [loadMatches]);
+  useEffect(() => { if (!winnerId) { setWinnerDecks([]); return; } jsonFetch<{ decks: DeckSummary[] }>(`/api/profiles/${winnerId}/decks`).then((data) => setWinnerDecks(data.decks)).catch((cause) => setError(cause.message)); }, [winnerId]);
+  useEffect(() => { if (!loserId) { setLoserDecks([]); return; } jsonFetch<{ decks: DeckSummary[] }>(`/api/profiles/${loserId}/decks`).then((data) => setLoserDecks(data.decks)).catch((cause) => setError(cause.message)); }, [loserId]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); const form = new FormData(event.currentTarget); const formElement = event.currentTarget;

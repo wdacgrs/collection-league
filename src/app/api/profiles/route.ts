@@ -1,87 +1,73 @@
 import { NextResponse } from "next/server";
-import { eq, sql } from "drizzle-orm";
+import { isConstraintError, qualified } from "@/lib/sql";
+import { inArray, sql } from "drizzle-orm";
 import { cleanName, error } from "@/lib/api";
-import { getCatalog } from "@/lib/catalog";
 import { chunksOf } from "@/lib/chunks";
 import { getDb } from "@/lib/db";
-import { collectionCards, decks, profiles } from "@/db/schema";
+import { catalog, collectionCards, decks, profiles } from "@/db/schema";
 
-export async function GET() {
+export async function GET(request: Request) {
   const db = getDb();
+  const base = {
+    id: profiles.id,
+    name: profiles.name,
+    iconCard: profiles.iconCard,
+    createdAt: profiles.createdAt,
+  };
 
-  // Get profiles with card qty sum and deck count
+  // `?counts=0` skips the aggregates for callers that only need a picker list.
+  if (new URL(request.url).searchParams.get("counts") === "0") {
+    const rows = await db.select(base).from(profiles).orderBy(profiles.name);
+    return NextResponse.json({ profiles: rows });
+  }
+
+  // One statement: per-profile correlated subqueries use the
+  // (profileId, …) indexes instead of aggregating the whole tables.
   const rows = await db
     .select({
-      id: profiles.id,
-      name: profiles.name,
-      iconCard: profiles.iconCard,
-      createdAt: profiles.createdAt,
+      ...base,
+      cardCount: sql<number>`coalesce((select sum(${qualified(collectionCards.qty)}) from ${collectionCards} where ${qualified(collectionCards.profileId)} = ${qualified(profiles.id)}), 0)`,
+      deckCount: sql<number>`(select count(*) from ${decks} where ${qualified(decks.profileId)} = ${qualified(profiles.id)})`,
     })
     .from(profiles)
     .orderBy(profiles.name);
 
-  const profileIds = rows.map((p) => p.id);
-  if (!profileIds.length) return NextResponse.json({ profiles: [] });
-
-  const [cardSums, deckCounts] = await Promise.all([
-    db
-      .select({
-        profileId: collectionCards.profileId,
-        total: sql<number>`sum(${collectionCards.qty})`,
-      })
-      .from(collectionCards)
-      .groupBy(collectionCards.profileId),
-    db
-      .select({ profileId: decks.profileId, count: sql<number>`count(*)` })
-      .from(decks)
-      .groupBy(decks.profileId),
-  ]);
-
-  const cardSumMap = new Map(cardSums.map((r) => [r.profileId, r.total ?? 0]));
-  const deckCountMap = new Map(
-    deckCounts.map((r) => [r.profileId, r.count ?? 0]),
-  );
-
-  return NextResponse.json({
-    profiles: rows.map((p) => ({
-      ...p,
-      cardCount: cardSumMap.get(p.id) ?? 0,
-      deckCount: deckCountMap.get(p.id) ?? 0,
-    })),
-  });
+  return NextResponse.json({ profiles: rows });
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const body = (await request.json().catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
   const name = cleanName(body.name);
   if (!name) return error("Profile name is required.");
   if (body.seedCommons !== undefined && typeof body.seedCommons !== "boolean") {
     return error("seedCommons must be a boolean.");
   }
   const seedCommons = body.seedCommons ?? true;
-  if (body.iconCard !== undefined && body.iconCard !== null && typeof body.iconCard !== "string") {
+  if (
+    body.iconCard !== undefined &&
+    body.iconCard !== null &&
+    typeof body.iconCard !== "string"
+  ) {
     return error("iconCard must be a string or null.");
   }
   const iconCard = body.iconCard ?? null;
 
   const db = getDb();
 
-  // Check for duplicate name
-  const existing = await db
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.name, name))
-    .limit(1);
-  if (existing.length)
-    return error("A profile with that name already exists.", 409);
-
+  // No duplicate-name pre-check: the UNIQUE index on Profile.name rejects the
+  // batch below, which is caught and mapped to 409.
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
 
+  // Only the names of seedable cards, filtered in SQL.
   const seededCards = seedCommons
-    ? (await getCatalog(db)).filter(
-        (card) => card.rarity === "common" || card.rarity === "uncommon",
-      )
+    ? await db
+        .select({ name: catalog.name })
+        .from(catalog)
+        .where(inArray(catalog.rarity, ["common", "uncommon"]))
     : [];
   const statements = [
     db.insert(profiles).values({ id, name, iconCard, createdAt }),
@@ -98,9 +84,14 @@ export async function POST(request: Request) {
     ),
   ];
   try {
-    await db.batch(statements as [typeof statements[number], ...typeof statements[number][]]);
+    await db.batch(
+      statements as [
+        (typeof statements)[number],
+        ...(typeof statements)[number][],
+      ],
+    );
   } catch (cause) {
-    if (String(cause).includes("UNIQUE constraint failed")) {
+    if (isConstraintError(cause, "UNIQUE")) {
       return error("A profile with that name already exists.", 409);
     }
     throw cause;

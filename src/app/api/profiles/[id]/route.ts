@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { isConstraintError, qualified } from "@/lib/sql";
+import { desc, eq, sql } from "drizzle-orm";
 import { cleanName, error } from "@/lib/api";
-import { catalogNames } from "@/lib/catalog";
+import { resolveCatalogName } from "@/lib/catalog";
 import { getDb } from "@/lib/db";
-import { chunksOf } from "@/lib/chunks";
 import { collectionCards, deckCards, decks, profiles } from "@/db/schema";
 
 type Context = { params: Promise<{ id: string }> };
@@ -11,27 +11,31 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(_: Request, { params }: Context) {
   const { id } = await params;
   const db = getDb();
-  const profile = await db.select().from(profiles).where(eq(profiles.id, id))
-    .limit(1).then((rows) => rows[0] ?? null);
-  if (!profile) return error("Profile not found.", 404);
-  const [cards, profileDecks] = await Promise.all([
-    db.select().from(collectionCards).where(eq(collectionCards.profileId, id)).orderBy(collectionCards.name),
-    db.select({
-      id: decks.id, profileId: decks.profileId, name: decks.name,
-      commander: decks.commander, createdAt: decks.createdAt,
-    }).from(decks).where(eq(decks.profileId, id)).orderBy(desc(decks.createdAt)),
+  // One round trip: profile, collection, and decks with per-deck card totals
+  // (correlated subquery served by DeckCard_deckId_name_key).
+  const [profileRows, cards, profileDecks] = await db.batch([
+    db.select().from(profiles).where(eq(profiles.id, id)).limit(1),
+    db
+      .select()
+      .from(collectionCards)
+      .where(eq(collectionCards.profileId, id))
+      .orderBy(collectionCards.name),
+    db
+      .select({
+        id: decks.id,
+        profileId: decks.profileId,
+        name: decks.name,
+        commander: decks.commander,
+        createdAt: decks.createdAt,
+        cardCount: sql<number>`coalesce((select sum(${qualified(deckCards.qty)}) from ${deckCards} where ${qualified(deckCards.deckId)} = ${qualified(decks.id)}), 0)`,
+      })
+      .from(decks)
+      .where(eq(decks.profileId, id))
+      .orderBy(desc(decks.createdAt)),
   ]);
-  const deckIds = profileDecks.map((deck) => deck.id);
-  const deckCardCounts = (await Promise.all(chunksOf(deckIds, 99).map((ids) =>
-    db.select({ deckId: deckCards.deckId, total: sql<number>`sum(${deckCards.qty})` })
-      .from(deckCards).where(inArray(deckCards.deckId, ids)).groupBy(deckCards.deckId),
-  ))).flat();
-  const cardCountMap = new Map(deckCardCounts.map((row) => [row.deckId, row.total ?? 0]));
-  return NextResponse.json({
-    profile,
-    cards,
-    decks: profileDecks.map((deck) => ({ ...deck, cardCount: cardCountMap.get(deck.id) ?? 0 })),
-  });
+  const profile = profileRows[0];
+  if (!profile) return error("Profile not found.", 404);
+  return NextResponse.json({ profile, cards, decks: profileDecks });
 }
 
 export async function PUT(request: Request, { params }: Context) {
@@ -45,44 +49,46 @@ export async function PUT(request: Request, { params }: Context) {
   }
   if (Object.prototype.hasOwnProperty.call(body, "iconCard")) {
     if (body.iconCard === null) data.iconCard = null;
-    else if (typeof body.iconCard === "string") {
-      const canonicalName = (await catalogNames()).get(
-        body.iconCard.toLocaleLowerCase(),
-      );
-      if (!canonicalName) return error("Unknown card name.");
-      data.iconCard = canonicalName;
-    } else return error("iconCard must be a card name or null.");
+    else if (typeof body.iconCard !== "string")
+      return error("iconCard must be a card name or null.");
   }
-  if (!Object.keys(data).length) return error("No profile changes provided.");
+  if (!Object.keys(data).length && typeof body.iconCard !== "string")
+    return error("No profile changes provided.");
 
   const db = getDb();
-  const exists = await db.select({ id: profiles.id }).from(profiles)
-    .where(eq(profiles.id, id)).limit(1);
-  if (!exists.length) return error("Profile not found.", 404);
-  if (data.name) {
-    const duplicate = await db.select({ id: profiles.id }).from(profiles)
-      .where(and(eq(profiles.name, data.name), ne(profiles.id, id))).limit(1);
-    if (duplicate.length) return error("A profile with that name already exists.", 409);
+  if (typeof body.iconCard === "string") {
+    // Single indexed row lookup instead of loading the whole catalog.
+    const canonicalName = await resolveCatalogName(body.iconCard, db);
+    if (!canonicalName) return error("Unknown card name.");
+    data.iconCard = canonicalName;
   }
+
+  // UPDATE ... RETURNING doubles as the existence check; the UNIQUE index on
+  // name replaces a separate duplicate-name lookup.
+  let updated;
   try {
-    await db.update(profiles).set(data).where(eq(profiles.id, id));
+    updated = await db
+      .update(profiles)
+      .set(data)
+      .where(eq(profiles.id, id))
+      .returning();
   } catch (cause) {
-    if (String(cause).includes("UNIQUE constraint failed")) {
+    if (isConstraintError(cause, "UNIQUE")) {
       return error("A profile with that name already exists.", 409);
     }
     throw cause;
   }
-  const profile = await db.select().from(profiles).where(eq(profiles.id, id))
-    .limit(1).then((rows) => rows[0]);
-  return NextResponse.json({ profile });
+  if (!updated.length) return error("Profile not found.", 404);
+  return NextResponse.json({ profile: updated[0] });
 }
 
 export async function DELETE(_: Request, { params }: Context) {
   const { id } = await params;
   const db = getDb();
-  const exists = await db.select({ id: profiles.id }).from(profiles)
-    .where(eq(profiles.id, id)).limit(1);
-  if (!exists.length) return error("Profile not found.", 404);
-  await db.delete(profiles).where(eq(profiles.id, id));
+  const deleted = await db
+    .delete(profiles)
+    .where(eq(profiles.id, id))
+    .returning({ id: profiles.id });
+  if (!deleted.length) return error("Profile not found.", 404);
   return NextResponse.json({ deleted: true });
 }

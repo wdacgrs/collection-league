@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { cleanName, error } from "@/lib/api";
-import { catalogNames } from "@/lib/catalog";
+import { catalogNameQuery } from "@/lib/catalog";
 import { getDb } from "@/lib/db";
 import { collectionCards, profiles } from "@/db/schema";
 
@@ -9,28 +9,38 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function PUT(request: Request, { params }: Context) {
   const { id } = await params;
-  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const body = (await request.json().catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
   const rawName = cleanName(body.name);
   const qtyInput = body.qty;
   if (!rawName) return error("Card name is required.");
-  if (qtyInput !== undefined && (typeof qtyInput !== "number" || !Number.isInteger(qtyInput) || qtyInput < 0))
+  if (
+    qtyInput !== undefined &&
+    (typeof qtyInput !== "number" ||
+      !Number.isInteger(qtyInput) ||
+      qtyInput < 0)
+  )
     return error("Quantity must be a non-negative integer.");
   if (body.owned !== undefined && typeof body.owned !== "boolean")
     return error("Owned must be true or false.");
 
   const db = getDb();
 
-  const profile = await db
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.id, id))
-    .limit(1)
-    .then((r) => r[0] ?? null);
-  if (!profile) return error("Profile not found.", 404);
+  // Round trip 1: profile existence + canonical name lookup, batched.
+  const [profileRows, nameRows] = await db.batch([
+    db
+      .select({ id: profiles.id })
+      .from(profiles)
+      .where(eq(profiles.id, id))
+      .limit(1),
+    catalogNameQuery(db, rawName),
+  ]);
+  if (!profileRows.length) return error("Profile not found.", 404);
+  const name = nameRows[0]?.name ?? rawName;
 
-  const names = await catalogNames(db);
-  const name = names.get(rawName.toLocaleLowerCase()) ?? rawName;
-
+  // Round trip 2: delete or upsert.
   if (qtyInput === 0) {
     await db
       .delete(collectionCards)
@@ -40,49 +50,24 @@ export async function PUT(request: Request, { params }: Context) {
     return NextResponse.json({ deleted: true });
   }
 
-  // Upsert via select, then update or insert.
-  const cardId = crypto.randomUUID();
   const qty = typeof qtyInput === "number" ? qtyInput : 1;
   const owned = typeof body.owned === "boolean" ? body.owned : true;
-
-  const existing = await db
-    .select()
-    .from(collectionCards)
-    .where(
-      and(eq(collectionCards.profileId, id), eq(collectionCards.name, name)),
-    )
-    .limit(1)
-    .then((r) => r[0] ?? null);
-
-  if (existing) {
-    await db
-      .update(collectionCards)
-      .set({
-        ...(qtyInput !== undefined ? { qty } : {}),
-        ...(body.owned !== undefined ? { owned } : {}),
-      })
-      .where(
-        and(eq(collectionCards.profileId, id), eq(collectionCards.name, name)),
-      );
-    const card = await db
-      .select()
-      .from(collectionCards)
-      .where(
-        and(eq(collectionCards.profileId, id), eq(collectionCards.name, name)),
-      )
-      .limit(1)
-      .then((r) => r[0]);
-    return NextResponse.json({ card });
-  }
-
-  await db
+  // On conflict only overwrite the fields the caller provided; `qty = qty` is
+  // a no-op that keeps the SET clause non-empty so RETURNING still yields the row.
+  const set = {
+    qty:
+      qtyInput !== undefined
+        ? sql`excluded."qty"`
+        : sql`${collectionCards.qty}`,
+    ...(body.owned !== undefined ? { owned: sql`excluded."owned"` } : {}),
+  };
+  const [card] = await db
     .insert(collectionCards)
-    .values({ id: cardId, profileId: id, name, qty, owned });
-  const card = await db
-    .select()
-    .from(collectionCards)
-    .where(eq(collectionCards.id, cardId))
-    .limit(1)
-    .then((r) => r[0]);
+    .values({ id: crypto.randomUUID(), profileId: id, name, qty, owned })
+    .onConflictDoUpdate({
+      target: [collectionCards.profileId, collectionCards.name],
+      set,
+    })
+    .returning();
   return NextResponse.json({ card });
 }

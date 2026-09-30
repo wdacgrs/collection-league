@@ -8,16 +8,11 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function DELETE(_: Request, { params }: Context) {
   const { id } = await params;
-  const db = getDb();
-
-  const exists = await db
-    .select({ id: matches.id })
-    .from(matches)
+  // DELETE ... RETURNING doubles as the existence check.
+  const deleted = await getDb()
+    .delete(matches)
     .where(eq(matches.id, id))
-    .limit(1)
-    .then((r) => r[0] ?? null);
-  if (!exists) return error("Match not found.", 404);
-
-  await db.delete(matches).where(eq(matches.id, id));
+    .returning({ id: matches.id });
+  if (!deleted.length) return error("Match not found.", 404);
   return NextResponse.json({ deleted: true });
 }

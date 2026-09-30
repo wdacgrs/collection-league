@@ -31,8 +31,9 @@ export const collectionCards = sqliteTable(
     owned:     integer("owned", { mode: "boolean" }).notNull().default(true),
   },
   (t) => [
+    // Leftmost column of this unique index also serves profileId lookups,
+    // so no separate profileId index is needed.
     unique("CollectionCard_profileId_name_key").on(t.profileId, t.name),
-    index("CollectionCard_profileId_idx").on(t.profileId),
   ],
 );
 
@@ -52,7 +53,7 @@ export const decks = sqliteTable(
     commander: text("commander"),
     createdAt: text("createdAt").notNull().default(sql`(CURRENT_TIMESTAMP)`),
   },
-  (t) => [index("Deck_profileId_idx").on(t.profileId)],
+  (t) => [index("Deck_profileId_createdAt_idx").on(t.profileId, t.createdAt)],
 );
 
 export const deckRelations = relations(decks, ({ one, many }) => ({
@@ -73,8 +74,8 @@ export const deckCards = sqliteTable(
     isBasic: integer("isBasic", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [
+    // Leftmost column of this unique index also serves deckId lookups.
     unique("DeckCard_deckId_name_key").on(t.deckId, t.name),
-    index("DeckCard_deckId_idx").on(t.deckId),
   ],
 );
 
@@ -99,6 +100,8 @@ export const matches = sqliteTable(
   (t) => [
     index("Match_winnerId_idx").on(t.winnerId),
     index("Match_loserId_idx").on(t.loserId),
+    // Serves the global feed: ORDER BY createdAt DESC, id DESC LIMIT n.
+    index("Match_createdAt_id_idx").on(t.createdAt, t.id),
   ],
 );
 
@@ -111,15 +114,20 @@ export const matchRelations = relations(matches, ({ one }) => ({
 // Catalog — the card dataset, migrated out of the bundled data/catalog.json
 // so it becomes editable at runtime via the admin panel.
 // ---------------------------------------------------------------------------
-export const catalog = sqliteTable("Catalog", {
-  name:          text("name").primaryKey(),
-  qty:           integer("qty").notNull().default(1),
-  img:           text("img").notNull().default(""),
-  colors:        text("colors").notNull().default(""),
-  rarity:        text("rarity").notNull().default(""),
-  type:          text("type").notNull().default(""),
-  colorIdentity: text("colorIdentity").notNull().default(""),
-});
+export const catalog = sqliteTable(
+  "Catalog",
+  {
+    name:          text("name").primaryKey(),
+    qty:           integer("qty").notNull().default(1),
+    img:           text("img").notNull().default(""),
+    colors:        text("colors").notNull().default(""),
+    rarity:        text("rarity").notNull().default(""),
+    type:          text("type").notNull().default(""),
+    colorIdentity: text("colorIdentity").notNull().default(""),
+  },
+  // Case-insensitive single-card lookup (`name = ? COLLATE NOCASE`).
+  (t) => [index("Catalog_name_nocase_idx").on(sql`${t.name} COLLATE NOCASE`)],
+);
 
 // ---------------------------------------------------------------------------
 // SiteSetting — generic key/value store for admin-editable site settings.

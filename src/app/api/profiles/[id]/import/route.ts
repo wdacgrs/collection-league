@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { error } from "@/lib/api";
-import { catalogNames } from "@/lib/catalog";
 import { getDb } from "@/lib/db";
 import { chunksOf } from "@/lib/chunks";
-import { collectionCards, profiles } from "@/db/schema";
+import { catalog, collectionCards, profiles } from "@/db/schema";
+
+// CollectionCard has 5 columns → at most 20 rows per INSERT under D1's 100-param cap.
+const D1_INSERT_BATCH = 20;
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -37,15 +39,15 @@ export async function POST(request: Request, { params }: Context) {
 
   const db = getDb();
 
-  const profile = await db
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.id, id))
-    .limit(1)
-    .then((r) => r[0] ?? null);
-  if (!profile) return error("Profile not found.", 404);
+  // Round trip 1: profile existence + catalog names for canonicalization
+  // (an import resolves many names, so loading the catalog once is right here).
+  const [profileRows, catalogRows] = await db.batch([
+    db.select({ id: profiles.id }).from(profiles).where(eq(profiles.id, id)).limit(1),
+    db.select({ name: catalog.name }).from(catalog),
+  ]);
+  if (!profileRows.length) return error("Profile not found.", 404);
 
-  const known = await catalogNames(db);
+  const known = new Map(catalogRows.map((card) => [card.name.toLocaleLowerCase(), card.name]));
   const merged = new Map<string, { name: string; qty: number; known: boolean }>();
   for (const line of body.text.split(/\r?\n/)) {
     const parsed = parseLine(line);
@@ -59,46 +61,34 @@ export async function POST(request: Request, { params }: Context) {
   if (!merged.size) return error("No valid card lines were found.");
 
   const entries = [...merged.values()];
-  const names = entries.map((e) => e.name);
 
-  // Find which cards already exist
-  const existing = (
-    await Promise.all(
-      chunksOf(names, 99).map((nameChunk) =>
-        db.select({ name: collectionCards.name }).from(collectionCards).where(
-          and(eq(collectionCards.profileId, id), inArray(collectionCards.name, nameChunk)),
-        ),
-      ),
-    )
-  ).flat();
-  const existingNames = new Set(existing.map((c) => c.name));
+  // Round trip 2, one atomic batch: read which names already exist (for the
+  // added/updated counts), then upsert everything. D1 caps statements at 100
+  // bound params: 99 names + profileId per SELECT, 20 rows × 5 cols per INSERT.
+  const existingQueries = chunksOf(entries.map((e) => e.name), 99).map((nameChunk) =>
+    db.select({ name: collectionCards.name }).from(collectionCards).where(
+      and(eq(collectionCards.profileId, id), inArray(collectionCards.name, nameChunk)),
+    ),
+  );
+  const upserts = chunksOf(entries, D1_INSERT_BATCH).map((chunk) =>
+    db.insert(collectionCards)
+      .values(chunk.map((e) => ({ id: crypto.randomUUID(), profileId: id, name: e.name, qty: e.qty, owned: true })))
+      .onConflictDoUpdate({
+        target: [collectionCards.profileId, collectionCards.name],
+        set: { qty: sql`${collectionCards.qty} + excluded."qty"` },
+      }),
+  );
+  const statements = [...existingQueries, ...upserts];
+  const results = await db.batch(statements as [typeof statements[number], ...typeof statements[number][]]);
 
-  const updates = entries.filter((e) => existingNames.has(e.name));
-  const inserts = entries.filter((e) => !existingNames.has(e.name));
-
-  for (const updateChunk of chunksOf(updates, 99)) {
-    const statements = updateChunk.map((entry) =>
-      db.update(collectionCards)
-        .set({ qty: sql`${collectionCards.qty} + ${entry.qty}` })
-        .where(and(eq(collectionCards.profileId, id), eq(collectionCards.name, entry.name))),
-    );
-    await db.batch(statements as [typeof statements[number], ...typeof statements[number][]]);
-  }
-  for (const insertChunk of chunksOf(inserts, 20)) {
-    await db.insert(collectionCards).values(
-      insertChunk.map((e) => ({
-        id: crypto.randomUUID(),
-        profileId: id,
-        name: e.name,
-        qty: e.qty,
-        owned: true,
-      })),
-    );
-  }
+  const existingNames = new Set(
+    (results.slice(0, existingQueries.length) as { name: string }[][]).flat().map((row) => row.name),
+  );
+  const updated = entries.filter((e) => existingNames.has(e.name)).length;
 
   return NextResponse.json({
-    added: inserts.length,
-    updated: updates.length,
+    added: entries.length - updated,
+    updated,
     unknown: entries.filter((e) => !e.known).map((e) => e.name),
   });
 }
