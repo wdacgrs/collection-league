@@ -94,6 +94,16 @@ Set these in **Settings → Secrets and variables → Actions** on your GitHub r
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID. Found in the dashboard URL: `dash.cloudflare.com/<account-id>`. |
 | `D1_DATABASE_ID` | UUID of the D1 database. Found in `wrangler.toml` → `database_id`, or via `cf d1 list`. |
 
+### GitHub Actions variables (optional — for forks / staging)
+
+Deploy targets are read from repository **variables** by `cloudflare.config.ts`; when unset, the upstream production values are used.
+
+| Variable | Description |
+|---|---|
+| `CF_WORKER_NAME` | Production Worker name. The preview Worker is `<name>-preview`. |
+| `CF_D1_NAME` / `CF_D1_ID` | Production D1 database name / UUID. |
+| `CF_D1_PREVIEW_NAME` / `CF_D1_PREVIEW_ID` | Preview D1 database. Setting `CF_D1_PREVIEW_ID` enables develop → preview deploys. |
+
 ### Admin password
 
 The admin panel at `/admin` is guarded by `ADMIN_PASSWORD`.
@@ -133,7 +143,7 @@ npm run db:migrate:remote
 
 ## Deployment
 
-Pushes to `main` automatically deploy via GitHub Actions (`.github/workflows/deploy.yml`).
+Pushes to `main` deploy to production via GitHub Actions (`.github/workflows/deploy.yml`). When `CF_D1_PREVIEW_ID` is set, pushes to `develop` deploy a separate preview Worker (`<name>-preview`) bound to its own D1 database, so preview migrations never touch production data.
 
 To deploy manually:
 
@@ -142,6 +152,9 @@ To deploy manually:
 npx cf auth login
 
 npm run deploy:vinext
+
+# Preview Worker (needs CF_D1_PREVIEW_NAME or CF_D1_PREVIEW_ID in the environment)
+npm run deploy:vinext -- --preview
 ```
 
 ## First-time setup
