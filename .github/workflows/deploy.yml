@@ -28,9 +28,14 @@ jobs:
       CF_D1_ID: ${{ vars.CF_D1_ID }}
       CF_D1_PREVIEW_NAME: ${{ vars.CF_D1_PREVIEW_NAME }}
       CF_D1_PREVIEW_ID: ${{ vars.CF_D1_PREVIEW_ID }}
+      # Whether this run targets production (main) or preview (any other branch).
+      # Kept as a separate flag so the value selections below never rely on an
+      # empty string as a ternary operand — in GitHub Actions expressions `''`
+      # is falsy, so `X && '' || '--preview'` wrongly yields '--preview' even on
+      # main. Compare against this explicit boolean instead.
+      IS_PRODUCTION: ${{ github.ref_name == 'main' }}
       # Migrations target the database bound to the Worker being deployed.
       MIGRATE_D1_ID: ${{ github.ref_name == 'main' && secrets.D1_DATABASE_ID || vars.CF_D1_PREVIEW_ID }}
-      DEPLOY_FLAGS: ${{ github.ref_name == 'main' && '' || '--preview' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -47,5 +52,9 @@ jobs:
         run: npm test
       - name: Apply D1 migrations
         run: npx cf d1 migrations apply "$MIGRATE_D1_ID" --dir drizzle
-      - name: Build & deploy
-        run: npm run deploy:vinext -- $DEPLOY_FLAGS
+      - name: Build & deploy (production)
+        if: env.IS_PRODUCTION == 'true'
+        run: npm run deploy:vinext
+      - name: Build & deploy (preview)
+        if: env.IS_PRODUCTION != 'true'
+        run: npm run deploy:vinext -- --preview
