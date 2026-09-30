@@ -48,6 +48,43 @@ export function commanderCandidates(
 }
 
 /**
+ * Validate changing a deck's commanders from `current` to `requested`.
+ * Names already selected on the deck are kept as-is (so decks created before
+ * these rules can still drop or keep a legacy commander); every newly added
+ * name must pass `validateCommanderSelection`. Still at most 2, distinct.
+ */
+export function validateCommanderChange(
+  requested: readonly string[],
+  current: readonly string[],
+  catalog: readonly TypedCard[],
+  collection: readonly OwnedEntry[],
+): CommanderCheck {
+  const names = requested.map((n) => n.trim()).filter((n) => n.length > 0);
+  if (names.length > MAX_COMMANDERS) {
+    return { ok: false, error: `Choose at most ${MAX_COMMANDERS} commanders.` };
+  }
+  if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) {
+    return { ok: false, error: "Choose two different commanders." };
+  }
+  const existing = new Map(current.map((n) => [n.trim().toLowerCase(), n.trim()]));
+  const result: string[] = [];
+  for (const name of names) {
+    const kept = existing.get(name.toLowerCase());
+    if (kept) {
+      result.push(kept);
+      continue;
+    }
+    const check = validateCommanderSelection([name], catalog, collection);
+    if (!check.ok) return check;
+    result.push(check.names[0]);
+  }
+  if (new Set(result.map((n) => n.toLowerCase())).size !== result.length) {
+    return { ok: false, error: "Choose two different commanders." };
+  }
+  return { ok: true, names: result };
+}
+
+/**
  * Validate a requested commander selection: at most 2 distinct cards, each a
  * catalog legendary creature the player owns. Returns canonical catalog names
  * in the requested order, or the first problem found.

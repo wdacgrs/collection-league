@@ -4,6 +4,7 @@ import catalogJson from "../../data/catalog.json";
 import {
   commanderCandidates,
   isLegendaryCreature,
+  validateCommanderChange,
   validateCommanderSelection,
   type OwnedEntry,
   type TypedCard,
@@ -149,5 +150,81 @@ describe("validateCommanderSelection", () => {
       ),
       RUNS,
     );
+  });
+});
+
+describe("validateCommanderChange", () => {
+  const collection = [
+    own("Danitha, Sword of Hope"),
+    own("Karn, Argent Defender"),
+    own("Flickering Hound"),
+  ];
+
+  it("keeps legacy commanders already on the deck without re-checking them", () => {
+    // "Flickering Hound" is not legendary, but it was already the commander.
+    expect(
+      validateCommanderChange(
+        ["Flickering Hound"],
+        ["Flickering Hound"],
+        catalog,
+        collection,
+      ),
+    ).toEqual({
+      ok: true,
+      names: ["Flickering Hound"],
+    });
+    expect(
+      validateCommanderChange(
+        ["flickering hound", "Karn, Argent Defender"],
+        ["Flickering Hound"],
+        catalog,
+        collection,
+      ),
+    ).toEqual({
+      ok: true,
+      names: ["Flickering Hound", "Karn, Argent Defender"],
+    });
+  });
+
+  it("checks every newly added commander", () => {
+    expect(
+      validateCommanderChange(["Flickering Hound"], [], catalog, collection),
+    ).toMatchObject({ ok: false });
+    expect(
+      validateCommanderChange(
+        ["Karn, Argent Defender", "Ajani Resolute"],
+        ["Karn, Argent Defender"],
+        catalog,
+        collection,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: "Ajani Resolute is not a legendary creature.",
+    });
+  });
+
+  it("allows clearing and enforces the cap and distinctness", () => {
+    expect(
+      validateCommanderChange(
+        [],
+        ["Karn, Argent Defender"],
+        catalog,
+        collection,
+      ),
+    ).toEqual({ ok: true, names: [] });
+    expect(
+      validateCommanderChange(["a", "b", "c"], [], catalog, collection),
+    ).toMatchObject({ ok: false, error: "Choose at most 2 commanders." });
+    expect(
+      validateCommanderChange(
+        ["Karn, Argent Defender", "karn, argent defender"],
+        [],
+        catalog,
+        collection,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: "Choose two different commanders.",
+    });
   });
 });

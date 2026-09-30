@@ -122,7 +122,7 @@ h1, h2, h3, p { margin-top: 0; }
 .commander-chip { color: var(--gold-2); }
 .editor-columns { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr); align-items: start; gap: 1px; max-width: 1440px; margin: 1rem auto 4rem; background: var(--line); border: 1px solid var(--line); }
 .deck-contents, .add-panel { min-width: 0; background: var(--bg); padding: 1rem; }
-.deck-contents { position: sticky; top: 79px; max-height: calc(100vh - 80px); overflow-y: auto; }
+.deck-contents { position: sticky; top: var(--workspace-header-h, 79px); max-height: calc(100vh - var(--workspace-header-h, 79px)); overflow-y: auto; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: .7rem; border-bottom: 1px solid var(--line); padding-bottom: .75rem; }
 .panel-title h2 { margin: 0; font-family: Georgia, serif; }
 .panel-title span { color: var(--muted); font-size: .85rem; }
@@ -158,7 +158,8 @@ h1, h2, h3, p { margin-top: 0; }
 .commander-star { flex: 0 0 2.2rem; width: 2.2rem; min-height: 2rem; padding: .15rem; border-radius: 3px; color: #cbc6ba; background: #17191dee; font-size: 1.15rem; line-height: 1; }
 .commander-star.active { color: var(--gold-2); border-color: var(--gold); background: #3a2f17; }
 .deck-card-tile .card-meta { align-items: center; }
-.deck-card-tile .rarity-gem { flex: 0 0 auto; max-width: 5rem; overflow: hidden; }
+.deck-card-tile .rarity-gem { flex: 0 0 auto; }
+.deck-card-tile .card-meta strong { min-width: 0; }
 .pool-title { align-items: stretch; }
 .pool-title .search { width: min(20rem, 55%); }
 .pool-section { margin-top: 1.25rem; }
@@ -246,8 +247,9 @@ h1, h2, h3, p { margin-top: 0; }
 /* Commander color-identity: out-of-identity deck cards (Req 7.2) */
 .deck-card-tile.out-of-identity .deck-card-visual { filter: grayscale(.55) brightness(.82); outline: 2px solid #c0392b; outline-offset: -2px; border-radius: 4px; }
 .off-color-badge { position: absolute; top: .45rem; left: .45rem; display: grid; place-items: center; min-width: 1.7rem; height: 1.7rem; padding: 0 .35rem; border-radius: 999px; background: #c0392b; color: #fff; font-weight: 900; box-shadow: 0 2px 8px #000c; }
-.card-line.out-of-identity { border-left: 3px solid #c0392b; }
-.card-line.out-of-identity .off-color-badge { position: static; display: inline; min-width: 0; height: auto; padding: 0; background: none; color: #e06a5c; box-shadow: none; }
+.card-line.out-of-identity, .add-row.out-of-identity { border-left: 3px solid #c0392b; }
+.add-row.out-of-identity b { color: #cfc8bb; }
+.card-line.out-of-identity .off-color-badge, .add-row.out-of-identity .off-color-badge { position: static; display: inline; min-width: 0; height: auto; padding: 0; background: none; color: #e06a5c; box-shadow: none; }
 
 /* Admin panel */
 .admin {
@@ -476,4 +478,30 @@ h1, h2, h3, p { margin-top: 0; }
 .admin-bulk summary {
   cursor: pointer;
   color: var(--gold);
+}
+/* Rarity chip: `.card-meta span` sets muted text, which is unreadable on the
+   silver/gold/orange chips. Dark text on light chips, white on common. */
+.card-meta .rarity-gem { color: #0d0e10; }
+.card-meta .rarity-gem.rarity-common { color: #fff; }
+
+/* Deck editor pool: sticky toolbar under the sticky workspace header. */
+.add-panel > .pool-toolbar { position: sticky; top: var(--workspace-header-h, 78px); z-index: 15; flex-wrap: wrap; margin: -1rem -1rem 0; padding: .75rem 1rem; background: #0d0e10f2; backdrop-filter: blur(10px); }
+.pool-toolbar h2 { flex: 1 1 auto; }
+.pool-toolbar .search { flex: 1 1 14rem; width: auto; }
+.pool-controls { display: flex; flex: 1 0 100%; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+.pool-controls button { min-height: 2rem; padding: .3rem .7rem; color: var(--muted); font-size: .8rem; }
+.off-color-toggle.active { color: #f4d9d4; border-color: #c0392b; background: #3a1d1a; }
+.pool-empty { margin: 1.25rem 0 0; }
+
+/* Collapsible pool groups: the whole header is the toggle button. */
+.pool-section > h3 { padding: 0; }
+.group-toggle { display: flex; align-items: center; gap: .55rem; width: 100%; min-height: 2.4rem; padding: .5rem .65rem; border: 0; border-radius: 0; color: inherit; background: transparent; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; }
+.group-toggle:hover:not(:disabled) { color: var(--gold-2); background: #332b1e; }
+.group-name { flex: 1; }
+.group-chevron { width: 1ch; color: var(--gold-2); }
+.pool-section .add-list { max-height: none; overflow: visible; }
+
+@media (max-width: 900px) {
+  /* The workspace header stops being sticky here, so the toolbar sticks to the top. */
+  .add-panel > .pool-toolbar { top: 0; }
 }
