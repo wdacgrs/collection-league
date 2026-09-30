@@ -52,6 +52,25 @@ jobs:
         run: npm test
       - name: Apply D1 migrations
         run: npx cf d1 migrations apply "$MIGRATE_D1_ID" --dir drizzle
+      # cf deploy always enables strict mode for typed cloudflare.config.ts
+      # projects. Synchronize the Dashboard-controlled setting first so strict
+      # validation sees the same value as cloudflare.config.ts. This is needed
+      # because cf currently has no observability/settings sync command.
+      - name: Enable Worker observability
+        env:
+          WORKER_NAME: ${{ env.CF_WORKER_NAME }}
+        run: |
+          worker_name="${WORKER_NAME:-fra-collection-league}"
+          if [ "$IS_PRODUCTION" != "true" ]; then
+            worker_name="${worker_name}-preview"
+          fi
+          response="$(curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${worker_name}/script-settings" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"observability":{"enabled":true}}')"
+          echo "$response" | jq --exit-status '.success == true' >/dev/null
       - name: Build & deploy (production)
         if: env.IS_PRODUCTION == 'true'
         run: npm run deploy:vinext
