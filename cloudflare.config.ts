@@ -15,12 +15,20 @@ import { bindings, defineConfig, defineWorker } from "cf/config";
 // database, so preview migrations and test data never touch production.
 const workerName = process.env.CF_WORKER_NAME || "fra-collection-league";
 
+// Bind by UUID when one is configured, otherwise by name — never both. The
+// deployed Worker records D1 bindings by id only, so a local binding that also
+// carries `name` always looks like drift, and non-interactive (CI) deploys run
+// with --strict and abort on it.
+function d1Binding(name: string | undefined, id: string | undefined) {
+  return bindings.d1(id ? { id } : { name });
+}
+
 function d1For(mode: string | undefined) {
   if (mode !== "preview") {
-    return bindings.d1({
-      name: process.env.CF_D1_NAME || "fra-db-prod-20260930",
-      ...(process.env.CF_D1_ID ? { id: process.env.CF_D1_ID } : {}),
-    });
+    return d1Binding(
+      process.env.CF_D1_NAME || "fra-db-prod-20260930",
+      process.env.CF_D1_ID,
+    );
   }
   const name = process.env.CF_D1_PREVIEW_NAME;
   const id = process.env.CF_D1_PREVIEW_ID;
@@ -28,7 +36,7 @@ function d1For(mode: string | undefined) {
     // Fail loudly rather than silently binding preview to production data.
     throw new Error("Preview mode needs CF_D1_PREVIEW_NAME or CF_D1_PREVIEW_ID.");
   }
-  return bindings.d1({ ...(name ? { name } : {}), ...(id ? { id } : {}) });
+  return d1Binding(name, id);
 }
 
 export default defineConfig({
