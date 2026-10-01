@@ -1,0 +1,17 @@
+{
+  "name": "sync-fork-upstream-main",
+  "description": "Merge upstream main into the fork's main and develop branches, preserving fork-only commits and creating timestamped backups. Intended to be run at 08:30 HKT (00:30 UTC); Kiro Workflows do not provide a built-in scheduler.",
+  "inputs": {
+    "repo_path": "absolute path to the fork checkout",
+    "upstream_repo": "owner/repository of the upstream fork parent",
+    "upstream_branch": "upstream source branch"
+  },
+  "steps": [
+    {
+      "type": "step",
+      "id": "sync-fork",
+      "agent": "wf-coder",
+      "prompt": "Synchronize the fork checkout at {{repo_path}} with upstream {{upstream_repo}} branch {{upstream_branch}}. This is a repository synchronization task, not an application-code task. Do not modify application files, GitHub Actions, or workflow definitions while executing the sync.\n\nOperate only in {{repo_path}}. Before doing anything, inspect the current branch and working tree. Do not discard uncommitted work; if the worktree is dirty, stop and report the paths. Ensure origin points to the fork and add or update an upstream remote pointing to https://github.com/{{upstream_repo}}. Fetch origin's main and develop branches and upstream's {{upstream_branch}}.\n\nSynchronize both fork target branches, main and develop, from upstream/{{upstream_branch}}. Preserve fork-only commits: use a normal git merge --no-edit, allowing a fast-forward when the target is behind upstream and creating a merge commit only when the histories diverge. Never reset, rebase, force-reset, or discard fork-only commits.\n\nBefore changing either target branch, create and push timestamped backup branches on origin for both current tips. Use names such as backup/kiro-upstream-sync-<UTC timestamp>-main and backup/kiro-upstream-sync-<UTC timestamp>-develop; include the run timestamp in both names so backups do not collide. Prepare both merges in temporary detached worktrees before pushing either target. If either merge conflicts, abort that merge, leave both target branches unchanged, keep the backups, and report the conflicting files and backup branch names.\n\nOnly after both merges complete cleanly, push the resulting tips to origin/main and origin/develop. Use --force-with-lease with the fetched old tip as the lease, even though the merge should be a normal descendant update, so a concurrent change cannot be overwritten. If a target already contains upstream/{{upstream_branch}}, do not push it. Do not delete old branches or backups.\n\nVerify after pushing that origin/main and origin/develop contain upstream/{{upstream_branch}} and that fork-only commits from each target remain in its history. Report the upstream commit, each old and new target SHA, each backup branch, whether a fast-forward or merge commit was used, and any conflict or push failure. Do not claim success unless the remote branch SHAs were verified."
+    }
+  ]
+}
