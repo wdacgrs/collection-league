@@ -1,0 +1,94 @@
+name: Sync fork with upstream
+
+# This workflow syncs both fork branches from upstream/main while preserving
+# fork-only commits. It never resets or force-rewrites a branch. Before any
+# push, it creates a timestamped backup branch for each target.
+#
+# The schedule is 08:30 UTC. GitHub Actions cron expressions are UTC; change
+# the cron value if the desired morning time is in another timezone.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 8 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork-with-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: percycpcpc/fra-collection-league
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Merge upstream main into fork branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+
+      - name: Fetch fork and upstream branches
+        run: |
+          git fetch --prune origin main develop
+          git fetch --prune upstream "${UPSTREAM_BRANCH}"
+
+      - name: Back up and merge upstream main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          timestamp="$(date -u +%Y%m%d-%H%M%S)"
+          backup_prefix="backup/upstream-sync-${timestamp}-${GITHUB_RUN_ID}"
+          work_root="$(mktemp -d)"
+          trap 'git worktree remove --force "$work_root/main" 2>/dev/null || true; git worktree remove --force "$work_root/develop" 2>/dev/null || true; rm -rf "$work_root"' EXIT
+
+          declare -A old_sha merged_sha backup_ref
+
+          # Prepare both merges before pushing either target. If either branch
+          # has a conflict, the job stops with both branch tips unchanged;
+          # backups have already been created for recovery.
+          for target in main develop; do
+            old_sha["$target"]="$(git rev-parse "origin/$target")"
+            backup_ref["$target"]="refs/heads/${backup_prefix}-${target}"
+
+            git push origin "${old_sha[$target]}:${backup_ref[$target]}"
+            echo "Backed up $target at ${old_sha[$target]} as ${backup_ref[$target]}"
+
+            git worktree add --detach "$work_root/$target" "origin/$target"
+            if git -C "$work_root/$target" merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+              merged_sha["$target"]="$(git -C "$work_root/$target" rev-parse HEAD)"
+              echo "$target merge result: ${merged_sha[$target]}"
+            else
+              echo "Merge conflict while syncing $target. Backups were created; no target branch was pushed." >&2
+              exit 1
+            fi
+          done
+
+          # Push only after both merge results are clean. The lease prevents a
+          # concurrent manual push from being overwritten unexpectedly.
+          for target in main develop; do
+            if [ "${merged_sha[$target]}" = "${old_sha[$target]}" ]; then
+              echo "$target already contains upstream/${UPSTREAM_BRANCH}; no push needed."
+              continue
+            fi
+            git push \
+              --force-with-lease="refs/heads/${target}:${old_sha[$target]}" \
+              origin "${merged_sha[$target]}:refs/heads/${target}"
+            echo "Synced $target: ${old_sha[$target]} -> ${merged_sha[$target]}"
+          done
+
+          echo "Upstream source: ${UPSTREAM_REPOSITORY}:${UPSTREAM_BRANCH}"
+          echo "Backup prefix: ${backup_prefix}" 
