@@ -4,12 +4,12 @@ name: Sync fork with upstream
 # fork-only commits. It never resets or force-rewrites a branch. Before any
 # push, it creates a timestamped backup branch for each target.
 #
-# The schedule is 08:30 UTC. GitHub Actions cron expressions are UTC; change
-# the cron value if the desired morning time is in another timezone.
+# The schedule is 08:30 HKT (00:30 UTC). GitHub Actions cron expressions
+# are UTC; the UTC conversion keeps the run at 08:30 Hong Kong time.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 8 * * *"
+    - cron: "30 0 * * *"
 
 permissions:
   contents: write
